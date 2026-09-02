@@ -1,5 +1,9 @@
 import feedparser
-
+from database import (
+    initialize_database,
+    news_exists,
+    save_news
+)
 from datetime import datetime, timedelta, timezone
 
 from config import KEYWORDS, EXCLUDE_KEYWORDS
@@ -214,30 +218,53 @@ if __name__ == "__main__":
 
     print("=" * 60)
 
-    # 1. 获取
+    # 初始化数据库
+    initialize_database()
+
+    # 获取新闻
     news = fetch_news()
 
     print()
     print(f"原始新闻数量：{len(news)}")
 
-    # 2. 时间过滤
+    # 时间过滤
     recent_news = filter_by_time(news)
 
     print(f"过去24小时：{len(recent_news)}")
 
-    # 3. 去重
+    # 去重
     unique_news = remove_duplicates(recent_news)
 
     print(f"去重后：{len(unique_news)}")
 
-    # 4. 关键词筛选
+    # 关键词筛选
     filtered_news = filter_news(unique_news)
 
     print(f"关键词筛选后：{len(filtered_news)}")
 
+    # 保存新新闻
+    new_count = 0
+    old_count = 0
+
+    for article in filtered_news:
+
+        if news_exists(article["link"]):
+
+            old_count += 1
+
+            continue
+
+        if save_news(article):
+
+            new_count += 1
+
     print()
     print("=" * 60)
-    print("最终新闻")
+
+    print(f"新新闻：{new_count}")
+
+    print(f"数据库中已有：{old_count}")
+
     print("=" * 60)
 
     for article in filtered_news:
