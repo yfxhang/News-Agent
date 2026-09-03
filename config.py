@@ -1,4 +1,16 @@
 # =========================
+# RSS 新闻源配置
+# =========================
+
+RSS_FEEDS = [
+    "https://news.smm.cn/rss/original",
+    "https://news.smm.cn/rss/industry",
+    "https://news.smm.cn/rss/spot",
+    "https://news.smm.cn/rss/macro"
+]
+
+
+# =========================
 # SMM 新闻关键词配置
 # =========================
 
@@ -77,7 +89,10 @@ KEYWORDS = {
 }
 
 
+# =========================
 # 不希望进入日报的内容
+# =========================
+
 EXCLUDE_KEYWORDS = [
     "招聘",
     "会议报名",
