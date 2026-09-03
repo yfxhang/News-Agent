@@ -1,4 +1,5 @@
 import feedparser
+import json
 from database import (
     initialize_database,
     news_exists,
@@ -7,7 +8,7 @@ from database import (
 from datetime import datetime, timedelta, timezone
 
 from config import KEYWORDS, EXCLUDE_KEYWORDS
-
+from ai import anlyze_news
 
 # =========================
 # SMM RSS
@@ -290,3 +291,37 @@ if __name__ == "__main__":
         print(article["link"])
 
         print("-" * 60)
+    # =========================
+    # AI 测试
+    # =========================
+
+    if filtered_news:
+
+        print()
+        print("=" * 60)
+        print("AI 测试")
+        print("=" * 60)
+
+        test_article = filtered_news[0]
+
+        print()
+        print("正在分析：")
+        print(test_article["title"])
+
+        try:
+
+            result = analyze_news(test_article)
+
+            print()
+            print("AI 返回结果：")
+            print(json.dumps(
+                result,
+                ensure_ascii=False,
+                indent=2
+            ))
+
+        except Exception as e:
+
+            print()
+            print("AI 调用失败：")
+            print(repr(e))
