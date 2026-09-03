@@ -3,11 +3,16 @@
 # =========================
 
 RSS_FEEDS = [
-    "https://news.smm.cn/rss/original",
+    "https://news.smm.cn/rss/meeting",
     "https://news.smm.cn/rss/industry",
+    "https://news.smm.cn/rss/terminal",
     "https://news.smm.cn/rss/spot",
-    "https://news.smm.cn/rss/macro"
+    "https://news.smm.cn/rss/macro",
+    "https://news.smm.cn/rss/related",
+    "https://news.smm.cn/rss/future",
+    "https://news.smm.cn/rss/original"
 ]
+
 
 
 # =========================
