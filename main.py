@@ -82,11 +82,23 @@ def article_matches_keywords(article):
 
 def fetch_rss():
 
+    import requests
+
     all_articles = []
 
     print("=" * 60)
     print("SMM 新闻 Agent 启动")
     print("=" * 60)
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 "
+            "(Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/120.0 Safari/537.36"
+        )
+    }
 
     for rss_url in RSS_FEEDS:
 
@@ -96,7 +108,56 @@ def fetch_rss():
 
         try:
 
-            feed = feedparser.parse(rss_url)
+            # ------------------------------------------------
+            # 第一步：直接请求 RSS
+            # ------------------------------------------------
+
+            response = requests.get(
+                rss_url,
+                headers=headers,
+                timeout=20
+            )
+
+            print(
+                "HTTP状态：",
+                response.status_code
+            )
+
+            print(
+                "响应长度：",
+                len(response.content)
+            )
+
+            response.raise_for_status()
+
+            # ------------------------------------------------
+            # 第二步：交给 feedparser
+            # ------------------------------------------------
+
+            feed = feedparser.parse(
+                response.content
+            )
+
+            print(
+                "Feedparser解析状态：",
+                feed.bozo
+            )
+
+            if feed.bozo:
+
+                print(
+                    "Feedparser异常：",
+                    repr(feed.bozo_exception)
+                )
+
+            print(
+                "RSS新闻数量：",
+                len(feed.entries)
+            )
+
+            # ------------------------------------------------
+            # 第三步：读取新闻
+            # ------------------------------------------------
 
             for entry in feed.entries:
 
@@ -106,21 +167,32 @@ def fetch_rss():
 
                     continue
 
+                rss_tags = [
+                    tag.get("term", "").strip()
+                    for tag in entry.get("tags", [])
+                    if tag.get("term")
+                ]
+
                 article = {
 
-                    "title": entry.get("title", "").strip(),
+                    "title": entry.get(
+                        "title",
+                        ""
+                    ).strip(),
 
-                    "link": entry.get("link", "").strip(),
+                    "link": entry.get(
+                        "link",
+                        ""
+                    ).strip(),
 
-                    "summary": entry.get("summary", "").strip(),
+                    "summary": entry.get(
+                        "summary",
+                        ""
+                    ).strip(),
 
                     "published": published.isoformat(),
 
-                    "tags": [
-                        tag.get("term", "").strip()
-                        for tag in entry.get("tags", [])
-                        if tag.get("term")
-                    ]
+                    "tags": rss_tags
 
                 }
 
@@ -128,7 +200,9 @@ def fetch_rss():
 
         except Exception as e:
 
+            print()
             print("RSS读取失败：")
+            print(type(e).__name__)
             print(repr(e))
 
     return all_articles
