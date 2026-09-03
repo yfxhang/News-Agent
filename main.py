@@ -1,9 +1,15 @@
 import feedparser
 import json
+import requests
 
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
-from config import RSS_FEEDS, KEYWORDS, EXCLUDE_KEYWORDS
+from config import (
+    RSS_FEEDS,
+    KEYWORDS,
+    EXCLUDE_KEYWORDS
+)
 
 from database import (
     initialize_database,
@@ -17,63 +23,127 @@ from ai import analyze_news
 
 
 # ============================================================
-# 配置
+# AI 测试阶段限制
 # ============================================================
 
-# 第一次测试只处理 5 条 AI 新闻
-# 跑通以后可以改成 None，处理所有未分析新闻
+# 第一次测试只处理 5 条
+#
+# 等整个系统确认稳定以后，
+# 可以改成：
+#
+# AI_LIMIT = None
+#
+# 表示处理所有尚未分析的新闻。
+
 AI_LIMIT = 5
 
 
 # ============================================================
-# 工具函数
+# 时间解析
 # ============================================================
 
 def parse_time(entry):
 
     """
-    将 RSS 发布时间转换成 datetime。
+    尽可能兼容不同 RSS 时间字段。
+
+    优先级：
+
+    1. published_parsed
+    2. updated_parsed
+    3. published
+    4. updated
+
+    最终统一转换成 UTC datetime。
     """
 
-    if hasattr(entry, "published_parsed") and entry.published_parsed:
+    # --------------------------------------------------------
+    # 方法1：
+    # feedparser 已经解析好的 published_parsed
+    # --------------------------------------------------------
 
-        dt = datetime(
+    if getattr(entry, "published_parsed", None):
+
+        return datetime(
             *entry.published_parsed[:6],
             tzinfo=timezone.utc
         )
 
-        return dt
+    # --------------------------------------------------------
+    # 方法2：
+    # feedparser 已经解析好的 updated_parsed
+    # --------------------------------------------------------
+
+    if getattr(entry, "updated_parsed", None):
+
+        return datetime(
+            *entry.updated_parsed[:6],
+            tzinfo=timezone.utc
+        )
+
+    # --------------------------------------------------------
+    # 方法3：
+    # published 字符串
+    # --------------------------------------------------------
+
+    published = entry.get("published")
+
+    if published:
+
+        try:
+
+            dt = parsedate_to_datetime(
+                published
+            )
+
+            if dt.tzinfo is None:
+
+                dt = dt.replace(
+                    tzinfo=timezone.utc
+                )
+
+            return dt.astimezone(
+                timezone.utc
+            )
+
+        except Exception:
+
+            pass
+
+    # --------------------------------------------------------
+    # 方法4：
+    # updated 字符串
+    # --------------------------------------------------------
+
+    updated = entry.get("updated")
+
+    if updated:
+
+        try:
+
+            dt = parsedate_to_datetime(
+                updated
+            )
+
+            if dt.tzinfo is None:
+
+                dt = dt.replace(
+                    tzinfo=timezone.utc
+                )
+
+            return dt.astimezone(
+                timezone.utc
+            )
+
+        except Exception:
+
+            pass
+
+    # --------------------------------------------------------
+    # 所有方法都失败
+    # --------------------------------------------------------
 
     return None
-
-
-def article_matches_keywords(article):
-
-    """
-    根据标题、摘要、RSS标签进行关键词筛选。
-    """
-
-    text = " ".join([
-        article.get("title", ""),
-        article.get("summary", ""),
-        " ".join(article.get("tags", []))
-    ]).lower()
-
-    # 排除关键词
-    for keyword in EXCLUDE_KEYWORDS:
-
-        if keyword.lower() in text:
-
-            return False
-
-    # 包含关键词
-    for keyword in KEYWORDS:
-
-        if keyword.lower() in text:
-
-            return True
-
-    return False
 
 
 # ============================================================
@@ -82,7 +152,9 @@ def article_matches_keywords(article):
 
 def fetch_rss():
 
-    import requests
+    """
+    从 config.py 中配置的 RSS_FEEDS 抓取新闻。
+    """
 
     all_articles = []
 
@@ -90,7 +162,12 @@ def fetch_rss():
     print("SMM 新闻 Agent 启动")
     print("=" * 60)
 
+    # --------------------------------------------------------
+    # 请求头
+    # --------------------------------------------------------
+
     headers = {
+
         "User-Agent": (
             "Mozilla/5.0 "
             "(Windows NT 10.0; Win64; x64) "
@@ -98,7 +175,12 @@ def fetch_rss():
             "(KHTML, like Gecko) "
             "Chrome/120.0 Safari/537.36"
         )
+
     }
+
+    # --------------------------------------------------------
+    # 逐个读取 RSS
+    # --------------------------------------------------------
 
     for rss_url in RSS_FEEDS:
 
@@ -109,7 +191,7 @@ def fetch_rss():
         try:
 
             # ------------------------------------------------
-            # 第一步：直接请求 RSS
+            # HTTP 请求
             # ------------------------------------------------
 
             response = requests.get(
@@ -128,10 +210,13 @@ def fetch_rss():
                 len(response.content)
             )
 
+            # 如果 HTTP 不是 200，
+            # requests 会抛出异常。
+
             response.raise_for_status()
 
             # ------------------------------------------------
-            # 第二步：交给 feedparser
+            # feedparser 解析
             # ------------------------------------------------
 
             feed = feedparser.parse(
@@ -142,6 +227,10 @@ def fetch_rss():
                 "Feedparser解析状态：",
                 feed.bozo
             )
+
+            # ------------------------------------------------
+            # 如果 RSS 存在解析警告
+            # ------------------------------------------------
 
             if feed.bozo:
 
@@ -156,22 +245,76 @@ def fetch_rss():
             )
 
             # ------------------------------------------------
-            # 第三步：读取新闻
+            # 读取每条新闻
             # ------------------------------------------------
 
             for entry in feed.entries:
 
-                published = parse_time(entry)
+                published = parse_time(
+                    entry
+                )
+
+                # ------------------------------------------------
+                # 无法解析时间
+                # ------------------------------------------------
 
                 if not published:
 
+                    print()
+                    print(
+                        "⚠ 无法解析新闻时间："
+                    )
+
+                    print(
+                        entry.get(
+                            "title",
+                            ""
+                        )
+                    )
+
+                    print(
+                        "published =",
+                        repr(
+                            entry.get(
+                                "published"
+                            )
+                        )
+                    )
+
+                    print(
+                        "updated =",
+                        repr(
+                            entry.get(
+                                "updated"
+                            )
+                        )
+                    )
+
                     continue
 
+                # ------------------------------------------------
+                # RSS 原始标签
+                # ------------------------------------------------
+
                 rss_tags = [
-                    tag.get("term", "").strip()
-                    for tag in entry.get("tags", [])
+
+                    tag.get(
+                        "term",
+                        ""
+                    ).strip()
+
+                    for tag in entry.get(
+                        "tags",
+                        []
+                    )
+
                     if tag.get("term")
+
                 ]
+
+                # ------------------------------------------------
+                # 组装新闻
+                # ------------------------------------------------
 
                 article = {
 
@@ -196,27 +339,60 @@ def fetch_rss():
 
                 }
 
-                all_articles.append(article)
+                # ------------------------------------------------
+                # 必须有标题和链接
+                # ------------------------------------------------
+
+                if not article["title"]:
+
+                    continue
+
+                if not article["link"]:
+
+                    continue
+
+                all_articles.append(
+                    article
+                )
 
         except Exception as e:
 
             print()
-            print("RSS读取失败：")
-            print(type(e).__name__)
-            print(repr(e))
+            print(
+                "RSS读取失败："
+            )
+
+            print(
+                type(e).__name__
+            )
+
+            print(
+                repr(e)
+            )
 
     return all_articles
 
 
 # ============================================================
-# 过滤最近 24 小时
+# 最近24小时筛选
 # ============================================================
 
-def filter_last_24_hours(articles):
+def filter_last_24_hours(
+    articles
+):
 
-    now = datetime.now(timezone.utc)
+    """
+    只保留最近24小时的新闻。
+    """
 
-    cutoff = now - timedelta(hours=24)
+    now = datetime.now(
+        timezone.utc
+    )
+
+    cutoff = (
+        now -
+        timedelta(hours=24)
+    )
 
     result = []
 
@@ -228,9 +404,25 @@ def filter_last_24_hours(articles):
                 article["published"]
             )
 
+            # ------------------------------------------------
+            # 如果没有时区，默认 UTC
+            # ------------------------------------------------
+
+            if published.tzinfo is None:
+
+                published = published.replace(
+                    tzinfo=timezone.utc
+                )
+
+            # ------------------------------------------------
+            # 最近24小时
+            # ------------------------------------------------
+
             if published >= cutoff:
 
-                result.append(article)
+                result.append(
+                    article
+                )
 
         except Exception:
 
@@ -243,7 +435,13 @@ def filter_last_24_hours(articles):
 # 新闻去重
 # ============================================================
 
-def deduplicate_articles(articles):
+def deduplicate_articles(
+    articles
+):
+
+    """
+    根据新闻 URL 去重。
+    """
 
     seen = set()
 
@@ -263,9 +461,118 @@ def deduplicate_articles(articles):
 
         seen.add(link)
 
-        result.append(article)
+        result.append(
+            article
+        )
 
     return result
+
+
+# ============================================================
+# 关键词匹配
+# ============================================================
+
+def match_keywords(
+    article
+):
+
+    """
+    根据 config.py 中的 KEYWORDS
+    给新闻打标签。
+
+    例如：
+
+    铜
+    锂
+    新能源
+    供应
+    政策
+    """
+
+    text = " ".join([
+
+        article.get(
+            "title",
+            ""
+        ),
+
+        article.get(
+            "summary",
+            ""
+        ),
+
+        " ".join(
+            article.get(
+                "tags",
+                []
+            )
+        )
+
+    ]).lower()
+
+    matched_tags = []
+
+    # --------------------------------------------------------
+    # 遍历分类
+    # --------------------------------------------------------
+
+    for category, keywords in KEYWORDS.items():
+
+        for keyword in keywords:
+
+            if keyword.lower() in text:
+
+                matched_tags.append(
+                    category
+                )
+
+                # 一个分类命中一次即可
+                break
+
+    return matched_tags
+
+
+# ============================================================
+# 排除关键词
+# ============================================================
+
+def contains_exclude_keyword(
+    article
+):
+
+    """
+    如果新闻包含排除关键词，
+    则不进入后续流程。
+    """
+
+    text = " ".join([
+
+        article.get(
+            "title",
+            ""
+        ),
+
+        article.get(
+            "summary",
+            ""
+        ),
+
+        " ".join(
+            article.get(
+                "tags",
+                []
+            )
+        )
+
+    ]).lower()
+
+    for keyword in EXCLUDE_KEYWORDS:
+
+        if keyword.lower() in text:
+
+            return True
+
+    return False
 
 
 # ============================================================
@@ -274,55 +581,100 @@ def deduplicate_articles(articles):
 
 def main():
 
-    # --------------------------------------------------------
-    # 初始化数据库
-    # --------------------------------------------------------
+    # ========================================================
+    # 1. 初始化数据库
+    # ========================================================
 
     initialize_database()
 
-    # --------------------------------------------------------
-    # 读取 RSS
-    # --------------------------------------------------------
+    # ========================================================
+    # 2. 抓取 RSS
+    # ========================================================
 
     articles = fetch_rss()
 
     print()
-    print("原始新闻数量：", len(articles))
-
-    # --------------------------------------------------------
-    # 最近24小时
-    # --------------------------------------------------------
-
-    articles = filter_last_24_hours(articles)
-
-    print("过去24小时：", len(articles))
-
-    # --------------------------------------------------------
-    # 去重
-    # --------------------------------------------------------
-
-    articles = deduplicate_articles(articles)
-
-    print("去重后：", len(articles))
-
-    # --------------------------------------------------------
-    # 关键词筛选
-    # --------------------------------------------------------
-
-    filtered_news = [
-
-        article
-
-        for article in articles
-
-        if article_matches_keywords(article)
-
-    ]
-
-    print("关键词筛选后：", len(filtered_news))
+    print(
+        "原始新闻数量：",
+        len(articles)
+    )
 
     # ========================================================
-    # 保存新新闻
+    # 3. 最近24小时
+    # ========================================================
+
+    articles = filter_last_24_hours(
+        articles
+    )
+
+    print(
+        "过去24小时：",
+        len(articles)
+    )
+
+    # ========================================================
+    # 4. 去重
+    # ========================================================
+
+    articles = deduplicate_articles(
+        articles
+    )
+
+    print(
+        "去重后：",
+        len(articles)
+    )
+
+    # ========================================================
+    # 5. 关键词筛选
+    # ========================================================
+
+    filtered_news = []
+
+    for article in articles:
+
+        # ----------------------------------------------------
+        # 排除关键词
+        # ----------------------------------------------------
+
+        if contains_exclude_keyword(
+            article
+        ):
+
+            continue
+
+        # ----------------------------------------------------
+        # 匹配关键词
+        # ----------------------------------------------------
+
+        matched_tags = match_keywords(
+            article
+        )
+
+        # 没有匹配关键词
+        # 不进入系统
+
+        if not matched_tags:
+
+            continue
+
+        # ----------------------------------------------------
+        # 使用我们的分类标签
+        # ----------------------------------------------------
+
+        article["tags"] = matched_tags
+
+        filtered_news.append(
+            article
+        )
+
+    print(
+        "关键词筛选后：",
+        len(filtered_news)
+    )
+
+    # ========================================================
+    # 6. 保存新新闻
     # ========================================================
 
     new_count = 0
@@ -331,17 +683,33 @@ def main():
 
     for article in filtered_news:
 
-        if news_exists(article["link"]):
+        # ----------------------------------------------------
+        # 数据库已经存在
+        # ----------------------------------------------------
+
+        if news_exists(
+            article["link"]
+        ):
 
             old_count += 1
 
+        # ----------------------------------------------------
+        # 新新闻
+        # ----------------------------------------------------
+
         else:
 
-            saved = save_news(article)
+            saved = save_news(
+                article
+            )
 
             if saved:
 
                 new_count += 1
+
+    # ========================================================
+    # 数据库统计
+    # ========================================================
 
     print()
     print("=" * 60)
@@ -349,12 +717,19 @@ def main():
     print("=" * 60)
 
     print()
-    print("新新闻：", new_count)
 
-    print("数据库中已有：", old_count)
+    print(
+        "新新闻：",
+        new_count
+    )
+
+    print(
+        "数据库中已有：",
+        old_count
+    )
 
     # ========================================================
-    # 查询尚未进行 AI 分析的新闻
+    # 7. 获取尚未进行 AI 分析的新闻
     # ========================================================
 
     unprocessed_news = get_unprocessed_news(
@@ -367,21 +742,42 @@ def main():
     print("=" * 60)
 
     print()
-    print("待 AI 分析：", len(unprocessed_news))
+
+    print(
+        "待 AI 分析：",
+        len(unprocessed_news)
+    )
 
     # ========================================================
-    # 如果没有需要分析的新闻
+    # 8. 没有待分析新闻
     # ========================================================
 
     if not unprocessed_news:
 
         print()
-        print("没有需要进行 AI 分析的新闻。")
+
+        print(
+            "没有需要进行 AI 分析的新闻。"
+        )
+
+        print()
+
+        print(
+            "=" * 60
+        )
+
+        print(
+            "任务完成"
+        )
+
+        print(
+            "=" * 60
+        )
 
         return
 
     # ========================================================
-    # 逐条调用 DeepSeek
+    # 9. DeepSeek AI 分析
     # ========================================================
 
     success_count = 0
@@ -397,18 +793,34 @@ def main():
         print("-" * 60)
 
         print(
-            f"正在分析第 {index}/{len(unprocessed_news)} 条"
+            f"正在分析第 "
+            f"{index}/{len(unprocessed_news)} 条"
         )
 
         print()
-        print(article["title"])
+
+        print(
+            article["title"]
+        )
 
         try:
 
-            result = analyze_news(article)
+            # ------------------------------------------------
+            # 调用 DeepSeek
+            # ------------------------------------------------
+
+            result = analyze_news(
+                article
+            )
+
+            # ------------------------------------------------
+            # 打印 AI 结果
+            # ------------------------------------------------
 
             print()
-            print("AI 返回结果：")
+            print(
+                "AI 返回结果："
+            )
 
             print(
                 json.dumps(
@@ -428,21 +840,33 @@ def main():
             )
 
             print()
-            print("✓ AI 分析结果已保存")
+
+            print(
+                "✓ AI 分析结果已保存"
+            )
 
             success_count += 1
 
         except Exception as e:
 
             print()
-            print("✗ AI 分析失败：")
 
-            print(repr(e))
+            print(
+                "✗ AI 分析失败："
+            )
+
+            print(
+                type(e).__name__
+            )
+
+            print(
+                repr(e)
+            )
 
             failed_count += 1
 
     # ========================================================
-    # 最终统计
+    # 10. 最终统计
     # ========================================================
 
     print()
@@ -451,11 +875,19 @@ def main():
     print("=" * 60)
 
     print()
-    print("成功：", success_count)
 
-    print("失败：", failed_count)
+    print(
+        "成功：",
+        success_count
+    )
+
+    print(
+        "失败：",
+        failed_count
+    )
 
     print()
+
     print("=" * 60)
     print("任务完成")
     print("=" * 60)
