@@ -8,7 +8,7 @@ from database import (
 from datetime import datetime, timedelta, timezone
 
 from config import KEYWORDS, EXCLUDE_KEYWORDS
-from ai import anlyze_news
+from ai import analyze_news
 
 # =========================
 # SMM RSS
